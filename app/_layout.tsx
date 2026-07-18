@@ -1,7 +1,7 @@
 import '@/lib/i18n';
 import { Inter_400Regular, Inter_600SemiBold } from '@expo-google-fonts/inter';
 import { PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold } from '@expo-google-fonts/plus-jakarta-sans';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
 import { router, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -13,13 +13,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { PrimaryButton } from '@/components/keel/PrimaryButton';
 import { onNotificationTap } from '@/lib/notifications';
+import { queryClient } from '@/lib/queryClient';
 import { spacing, type } from '@/theme/tokens';
 import { useTheme } from '@/theme/useTheme';
 import { useSession } from '@/state/useSession';
-
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 15_000 } },
-});
 
 function LockScreen() {
   const { colors } = useTheme();

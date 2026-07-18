@@ -18,19 +18,25 @@ import { useSession } from '@/state/useSession';
 
 function Row({ icon, title, hint, right, onPress }: { icon: React.ReactNode; title: string; hint?: string; right?: React.ReactNode; onPress?: () => void }) {
   const { colors } = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={!onPress}
-      accessibilityRole={onPress ? 'button' : undefined}
-      accessibilityLabel={hint ? `${title}. ${hint}` : title}
-      style={[styles.row, shadow.card, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>
+  const body = (
+    <>
       {icon}
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={[type.bodyBold, { color: colors.text }]}>{title}</Text>
         {hint ? <Text style={[type.small, { color: colors.textMuted }]}>{hint}</Text> : null}
       </View>
       {right}
+    </>
+  );
+  const rowStyle = [styles.row, shadow.card, { backgroundColor: colors.surface, borderColor: colors.hairline }];
+  if (!onPress) return <View style={rowStyle}>{body}</View>;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={hint ? `${title}. ${hint}` : title}
+      style={rowStyle}>
+      {body}
     </Pressable>
   );
 }

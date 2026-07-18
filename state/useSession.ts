@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
+import { queryClient } from '@/lib/queryClient';
 import { repo } from '@/lib/repo';
 import type { Session, UserRole } from '@/lib/types';
 
@@ -34,18 +35,21 @@ export const useSession = create<SessionState>((set, get) => ({
 
   async signIn(email, password) {
     const session = await repo.signIn(email, password);
+    queryClient.clear(); // never show a previous account's cached data
     set({ session });
     return session;
   },
 
   async signUp(email, password, role, displayName) {
     const session = await repo.signUp(email, password, role, displayName);
+    queryClient.clear();
     set({ session });
     return session;
   },
 
   async signOut() {
     await repo.signOut();
+    queryClient.clear();
     set({ session: null, locked: false });
   },
 
