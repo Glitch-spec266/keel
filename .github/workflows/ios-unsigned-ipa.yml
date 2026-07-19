@@ -9,9 +9,10 @@ on:
   workflow_dispatch: {}
   push:
     branches: [master]
-    paths:
-      - app.json                                    # a version bump triggers a release
-      - .github/workflows/ios-unsigned-ipa.yml
+    paths-ignore:                                   # skip builds for changes that can't affect the app binary
+      - '**.md'
+      - 'docs/**'
+      - 'supabase/**'
 
 permissions:
   contents: write        # create Releases
@@ -39,10 +40,16 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Read app metadata
+      - name: Auto-increment version and read metadata
         id: meta
         run: |
-          echo "version=$(node -p "require('./app.json').expo.version")"                >> "$GITHUB_OUTPUT"
+          # Keep the major.minor from app.json, use the monotonic run number as the patch,
+          # so every build gets a strictly higher version without hand-editing app.json.
+          BASE=$(node -p "require('./app.json').expo.version.split('.').slice(0,2).join('.')")
+          VERSION="${BASE}.${{ github.run_number }}"
+          node -e "const fs=require('fs');const j=require('./app.json');j.expo.version='${VERSION}';j.expo.ios=j.expo.ios||{};j.expo.ios.buildNumber='${{ github.run_number }}';fs.writeFileSync('./app.json',JSON.stringify(j,null,2)+'\n');"
+          echo "Building version $VERSION (this app.json change stays on the runner, never committed)"
+          echo "version=$VERSION"                                                       >> "$GITHUB_OUTPUT"
           echo "bundle_id=$(node -p "require('./app.json').expo.ios.bundleIdentifier")" >> "$GITHUB_OUTPUT"
           echo "app_name=$(node -p "require('./app.json').expo.name")"                  >> "$GITHUB_OUTPUT"
 
