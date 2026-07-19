@@ -5,7 +5,10 @@ name: Build unsigned iOS .ipa (for SideStore)
 # Run it manually from the Actions tab, then download the artifact.
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - .github/workflows/ios-unsigned-ipa.yml
 
 jobs:
   build:
