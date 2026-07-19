@@ -1,21 +1,31 @@
-name: Build unsigned iOS .ipa (for SideStore)
+name: Build & publish iOS .ipa (SideStore source)
 
-# Produces an UNSIGNED .ipa on a free GitHub macOS runner. SideStore re-signs it
-# on-device with your free Apple ID, so no Apple Developer account and no Mac are needed.
-# Run it manually from the Actions tab, then download the artifact.
+# Builds an UNSIGNED .ipa on a free macOS runner, publishes it as a GitHub Release
+# asset, and deploys a SideStore/AltStore Source manifest to GitHub Pages. Install
+# Keel in SideStore from that Source once; after that, bump `version` in app.json
+# and push — SideStore sees the new version and auto-updates on the phone.
 
 on:
   workflow_dispatch: {}
   push:
+    branches: [master]
     paths:
+      - app.json                                    # a version bump triggers a release
       - .github/workflows/ios-unsigned-ipa.yml
+
+permissions:
+  contents: write        # create Releases
+  pages: write           # deploy the Source manifest
+  id-token: write        # required by deploy-pages
+
+concurrency:
+  group: sidestore-release
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: macos-15
     env:
-      # Inlined into the JS bundle during the xcodebuild "Bundle React Native" phase.
-      # Add these under Settings -> Secrets and variables -> Actions.
       EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
       EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
     steps:
@@ -28,6 +38,13 @@ jobs:
 
       - name: Install JS dependencies
         run: npm ci
+
+      - name: Read app metadata
+        id: meta
+        run: |
+          echo "version=$(node -p "require('./app.json').expo.version")"                >> "$GITHUB_OUTPUT"
+          echo "bundle_id=$(node -p "require('./app.json').expo.ios.bundleIdentifier")" >> "$GITHUB_OUTPUT"
+          echo "app_name=$(node -p "require('./app.json').expo.name")"                  >> "$GITHUB_OUTPUT"
 
       - name: Prebuild native iOS project
         run: npx expo prebuild -p ios --clean
@@ -58,11 +75,86 @@ jobs:
           cd ios/build
           mkdir -p Payload
           cp -R app.xcarchive/Products/Applications/*.app Payload/
-          zip -r keel-unsigned.ipa Payload
-          ls -lh keel-unsigned.ipa
+          zip -r keel.ipa Payload
+          ls -lh keel.ipa
 
-      - uses: actions/upload-artifact@v4
+      - name: Publish GitHub Release with the .ipa
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.meta.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" ios/build/keel.ipa --clobber
+          else
+            gh release create "$TAG" ios/build/keel.ipa \
+              --title "$TAG" --notes "Keel $TAG — unsigned build for SideStore."
+          fi
+
+      - name: Generate SideStore Source manifest
+        run: |
+          mkdir -p _site
+          cp assets/images/icon.png _site/icon.png || true
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REPO="${{ github.event.repository.name }}"
+          export APP_NAME="${{ steps.meta.outputs.app_name }}"
+          export BUNDLE_ID="${{ steps.meta.outputs.bundle_id }}"
+          export VERSION="${{ steps.meta.outputs.version }}"
+          export SIZE="$(stat -f%z ios/build/keel.ipa)"
+          export DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/keel.ipa"
+          export PAGES_BASE="https://${OWNER_LC}.github.io/${REPO}"
+          # Keep prior version history if a manifest is already published.
+          curl -fsSL "${PAGES_BASE}/source.json" -o prev.json || echo '{}' > prev.json
+          python3 - <<'PY'
+          import json, os, datetime
+          env = os.environ
+          version, size = env['VERSION'], int(env['SIZE'])
+          url, base = env['DOWNLOAD_URL'], env['PAGES_BASE']
+          date = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+          try:
+              versions = json.load(open('prev.json'))['apps'][0].get('versions', [])
+          except Exception:
+              versions = []
+          if not versions or versions[0].get('version') != version:
+              versions.insert(0, {'version': version, 'date': date,
+                                  'downloadURL': url, 'size': size,
+                                  'localizedDescription': f'Keel {version}'})
+          src = {
+              'name': f"{env['APP_NAME']} (SideStore)",
+              'identifier': f"{env['BUNDLE_ID']}.source",
+              'sourceURL': f'{base}/source.json',
+              'apps': [{
+                  'name': env['APP_NAME'],
+                  'bundleIdentifier': env['BUNDLE_ID'],
+                  'developerName': 'Keel',
+                  'version': version,
+                  'versionDate': date,
+                  'versionDescription': f'Keel {version}',
+                  'downloadURL': url,
+                  'size': size,
+                  'iconURL': f'{base}/icon.png',
+                  'localizedDescription': 'Keel — care scheduling and civic verification.',
+                  'versions': versions,
+              }],
+          }
+          json.dump(src, open('_site/source.json', 'w'), indent=2)
+          print(open('_site/source.json').read())
+          PY
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
         with:
-          name: keel-unsigned-ipa
-          path: ios/build/keel-unsigned.ipa
-          if-no-files-found: error
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
