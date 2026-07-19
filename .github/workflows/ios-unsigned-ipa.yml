@@ -1,0 +1,65 @@
+name: Build unsigned iOS .ipa (for SideStore)
+
+# Produces an UNSIGNED .ipa on a free GitHub macOS runner. SideStore re-signs it
+# on-device with your free Apple ID, so no Apple Developer account and no Mac are needed.
+# Run it manually from the Actions tab, then download the artifact.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    env:
+      # Inlined into the JS bundle during the xcodebuild "Bundle React Native" phase.
+      # Add these under Settings -> Secrets and variables -> Actions.
+      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Prebuild native iOS project
+        run: npx expo prebuild -p ios --clean
+
+      - name: Install CocoaPods
+        run: cd ios && pod install
+
+      - name: Build unsigned archive
+        run: |
+          cd ios
+          WORKSPACE=$(ls -d *.xcworkspace | head -n1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "Workspace: $WORKSPACE  Scheme: $SCHEME"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/app.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Package .app into unsigned .ipa
+        run: |
+          cd ios/build
+          mkdir -p Payload
+          cp -R app.xcarchive/Products/Applications/*.app Payload/
+          zip -r keel-unsigned.ipa Payload
+          ls -lh keel-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keel-unsigned-ipa
+          path: ios/build/keel-unsigned.ipa
+          if-no-files-found: error

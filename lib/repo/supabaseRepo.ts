@@ -5,12 +5,7 @@ import type { OrgStudent, Profile, Session, UserRole, Verification, VerifyStatus
 // Supabase-backed repo. RLS does the real enforcement server-side; queries here
 // stay narrow so they work under deny-by-default policies.
 
-async function sessionFromAuth(): Promise<Session | null> {
-  const { data } = await supabase.auth.getSession();
-  const user = data.session?.user;
-  if (!user) return null;
-  const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-  if (!profile) return null;
+function sessionFromProfile(user: { id: string; email?: string }, profile: Profile): Session {
   return {
     userId: user.id,
     email: user.email ?? '',
@@ -18,6 +13,48 @@ async function sessionFromAuth(): Promise<Session | null> {
     displayName: profile.display_name,
     handle: profile.handle,
   };
+}
+
+// If the signup trigger ever fails to create the profiles row, create it here from
+// the auth metadata. RLS allows inserting your own row (id = auth.uid()), so this is
+// a safe self-heal that keeps sign-in working even when the DB trigger misfires.
+async function ensureProfile(user: { id: string; email?: string; user_metadata?: Record<string, unknown> }): Promise<Profile | null> {
+  const meta = user.user_metadata ?? {};
+  const handle = 'keel-' + user.id.replace(/-/g, '').slice(0, 8);
+  const { data, error } = await supabase
+    .from('profiles')
+    .insert({
+      id: user.id,
+      role: (meta.role as UserRole) ?? 'teen',
+      display_name: (meta.display_name as string) ?? null,
+      handle,
+    })
+    .select('*')
+    .single();
+  if (error) {
+    console.error('[keel] failed to create profile:', error.message);
+    return null;
+  }
+  return data;
+}
+
+async function sessionFromAuth(): Promise<Session | null> {
+  const { data } = await supabase.auth.getSession();
+  const user = data.session?.user;
+  if (!user) return null;
+
+  const { data: profile, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+  if (profile) return sessionFromProfile(user, profile);
+
+  // PGRST116 = no rows returned: the profile row is missing. Anything else is a real
+  // error (e.g. RLS/connectivity) we should surface rather than silently swallow.
+  if (error && error.code !== 'PGRST116') {
+    console.error('[keel] could not read profile:', error.message);
+    return null;
+  }
+
+  const healed = await ensureProfile(user);
+  return healed ? sessionFromProfile(user, healed) : null;
 }
 
 function throwIf(error: { message: string } | null): void {

@@ -1,4 +1,16 @@
 -- Keel RLS — deny by default (RLS on = no access until a policy grants it), then grant narrowly.
+
+-- Table-level privileges: RLS is checked only AFTER the base GRANT, so the API roles
+-- need SELECT/INSERT/UPDATE/DELETE or every query fails with "permission denied for table".
+-- Row access is still fully governed by the policies below (RLS stays deny-by-default).
+grant usage on schema public to anon, authenticated, service_role;
+grant all on all tables    in schema public to anon, authenticated, service_role;
+grant all on all sequences in schema public to anon, authenticated, service_role;
+grant all on all routines  in schema public to anon, authenticated, service_role;
+alter default privileges in schema public grant all on tables    to anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+alter default privileges in schema public grant all on routines  to anon, authenticated, service_role;
+
 alter table profiles                enable row level security;
 alter table care_recipients         enable row level security;
 alter table care_tasks              enable row level security;
